@@ -1,6 +1,7 @@
 import http.server
 import socketserver
 import requests
+from urllib.parse import urlparse
 
 # 图片文件路径
 # image_path = 'path/to/image.png'
@@ -10,16 +11,22 @@ import requests
 class MyHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         # 处理GET请求
-        if self.path == '/image.png':
-            # 如果请求路径是'/image.png'，则返回该图片文件
+        try:
+            bits = urlparse(self.path)
+            if bits.path != '/image':
+                # 其他路径返回404错误
+                self.send_error("path error!")
+            query = bits.query
             self.send_response(200)
             self.send_header('Content-type', 'image/png')
             self.end_headers()
-            with open(image_path, 'rb') as f:
+            print(image_path)
+            print(query)
+            with open(image_path + query, 'rb') as f:
                 self.wfile.write(f.read())
-        else:
+        except:
             # 其他路径返回404错误
-            self.send_error(404)
+            self.send_error("error!")
 
 # 启动Web服务器
 def web_start(image_path):
@@ -31,5 +38,5 @@ def web_start(image_path):
 
 
 if __name__ == "__main__":
-    image_path = "/home/ubuntu/stable_diffusion/images/image.png"
+    image_path = "/home/ubuntu/stable_diffusion/images/"
     web_start(image_path)

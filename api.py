@@ -6,6 +6,10 @@ import pickle
 import urllib
 import json
 from translate import translate
+from datetime import datetime
+
+realistic_pipe = StableDiffusionPipeline.from_pretrained("SG161222/Realistic_Vision_V2.0", torch_dtype=torch.float16, resume_download=True, use_safetensors=False)
+ghost_mix_pipe = StableDiffusionPipeline.from_pretrained("/home/ubuntu/tangdu/GhostMix", torch_dtype=torch.float16, resume_download=True, use_safetensors=False)
 
 
 # 初始化应用程序
@@ -17,29 +21,46 @@ file_name = ""
 def get_users():
     data = request.json
     prompt = data["prompt"]
-    image = generate_image(prompt)
-    file_name = "/home/ubuntu/stable_diffusion/images/image.png" 
+    model = data["model"]
+    if model == "" or model == "Realistic":
+        model_id = "Realistic"
+    elif model == "GhostMix":
+        model_id = "GhostMix"
+    image = generate_image(prompt, model_id)
+    timestamp = int(datetime.now().timestamp())
+    file_name = "/home/ubuntu/stable_diffusion/images/{}.png".format(timestamp)
     image.save(file_name)
+    file_link = "http://124.222.40.123:8001/image?{}.png".format(timestamp)
 
-    output = {"image_count": len(image), "file_path": file_name}
+    output = {"file_link": file_link}
 
-    return file_name
+    return output
     # return data
 
 
-def generate_image(text):
+def generate_image(text, model="Realistic"):
     # model_id = "prompthero/openjourney"
-    model_id = "SG161222/Realistic_Vision_V2.0"
+    # model_id = "SG161222/Realistic_Vision_V2.0"
+    if model == "Realistic":
+        pipe = realistic_pipe
+        height = 768                        # default height of Stable Diffusion
+        width = 768                         # default width of Stable Diffusion
+        
+    elif model == "GhostMix":
+        pipe = ghost_mix_pipe
+        height = 768                        # default height of Stable Diffusion
+        width = 512                         # default width of Stable Diffusion
 
-    height = 512                        # default height of Stable Diffusion
-    width = 512                         # default width of Stable Diffusion
+    image = pipeline(text, pipe, height, width)
+    return image
+
+
+def pipeline(text, pipe, height, width):
     num_inference_steps = 50            # Number of denoising steps
     guidance_scale = 7.5                # Scale for classifier-free guidance
     num_samples = 1
     num_rows = 1
 
-    # Use the DPMSolverMultistepScheduler (DPM-Solver++) scheduler here instead
-    pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16, resume_download=True, use_safetensors=False)
     pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
     pipe = pipe.to("cuda")
     pipe.enable_xformers_memory_efficient_attention()
@@ -57,7 +78,6 @@ def generate_image(text):
                  guidance_scale=guidance_scale,
                  generator=generator,
                  ).images[0]
-    
     return image
 
 
