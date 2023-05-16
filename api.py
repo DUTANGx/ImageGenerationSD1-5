@@ -1,20 +1,14 @@
 # 导入Flask库
 from flask import Flask, jsonify, request
-import torch
-from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
-import pickle
-import urllib
-import json
-from translate import translate
-from datetime import datetime
-
-realistic_pipe = StableDiffusionPipeline.from_pretrained("SG161222/Realistic_Vision_V2.0", torch_dtype=torch.float16, resume_download=True, use_safetensors=False)
-ghost_mix_pipe = StableDiffusionPipeline.from_pretrained("/home/ubuntu/tangdu/GhostMix", torch_dtype=torch.float16, resume_download=True, use_safetensors=False)
-
+from flask_cors import CORS
+from celery import Celery
+from tasks import generate_image
+import config
 
 # 初始化应用程序
 app = Flask(__name__)
-file_name = ""
+CORS(app)
+celery_app = Celery(config.celery_name, broker=config.BROKER_URL, backend=config.BACKEND_URL)
 
 # 为API定义路由
 @app.route('/api/image_genarate', methods=['post'])
@@ -26,59 +20,29 @@ def get_users():
         model_id = "Realistic"
     elif model == "GhostMix":
         model_id = "GhostMix"
-    image = generate_image(prompt, model_id)
-    timestamp = int(datetime.now().timestamp())
-    file_name = "/home/ubuntu/stable_diffusion/images/{}.png".format(timestamp)
-    image.save(file_name)
-    file_link = "http://124.222.40.123:8001/image?{}.png".format(timestamp)
-
-    output = {"file_link": file_link}
-
-    return output
-    # return data
+    task_result = generate_image.delay(prompt, model_id)
+    print("****prompt****:", prompt)
+    return jsonify({'success': 1, "task_id": task_result.id, "msg": "success"})
 
 
-def generate_image(text, model="Realistic"):
-    # model_id = "prompthero/openjourney"
-    # model_id = "SG161222/Realistic_Vision_V2.0"
-    if model == "Realistic":
-        pipe = realistic_pipe
-        height = 768                        # default height of Stable Diffusion
-        width = 768                         # default width of Stable Diffusion
-        
-    elif model == "GhostMix":
-        pipe = ghost_mix_pipe
-        height = 768                        # default height of Stable Diffusion
-        width = 512                         # default width of Stable Diffusion
-
-    image = pipeline(text, pipe, height, width)
-    return image
-
-
-def pipeline(text, pipe, height, width):
-    num_inference_steps = 50            # Number of denoising steps
-    guidance_scale = 7.5                # Scale for classifier-free guidance
-    num_samples = 1
-    num_rows = 1
-
-    pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-    pipe = pipe.to("cuda")
-    pipe.enable_xformers_memory_efficient_attention()
-
-    generator = torch.Generator("cuda").manual_seed(2022)
-
-    negative_prompt = "nude, NSFW, (deformed iris, deformed pupils, semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime:1.4), text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck"
-    text = translate(text)
-    image = pipe(prompt=text,
-                 negative_prompt=negative_prompt,
-                 num_images_per_prompt=num_samples,
-                 height=height,
-                 width=width,
-                 num_inference_steps=num_inference_steps,
-                 guidance_scale=guidance_scale,
-                 generator=generator,
-                 ).images[0]
-    return image
+@app.route('/api/get_task_genarate', methods=['GET'])
+def get_add():
+    task_id = request.args.get('task_id')
+    if not task_id:
+        return jsonify({'success': 0, "reason": "loss task_id"})
+    task_result = celery_app.AsyncResult(task_id)
+    print("****task_result****:", task_result.status)
+    if task_result.status == "PENDING":
+        return jsonify({'success': 0, "reason": "任务队列中..."})
+    elif task_result.status == "STARTED":
+        return jsonify({'success': 0, "reason": "图片生成中..."})
+    file_link = task_result.result
+    if file_link == "ERR1":
+        return {"success": 0, "reason": "翻译组件错误"}
+    elif file_link == "ERR2":
+        return {"success": 0, "reason": "模型选择错误"}
+    msg = {"success": 1, "reason": "PASS", "file_link": file_link}
+    return jsonify(msg)
 
 
 # 启动应用程序
